@@ -1,4 +1,5 @@
 import os
+import logging
 import asyncio
 import httpx
 from typing import Any
@@ -6,6 +7,13 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 # 1. Define the Lifespan Async Context Manager
@@ -23,7 +31,7 @@ async def lifespan(app: FastAPI):
     try:
         await task
     except asyncio.CancelledError:
-        print("Background scheduler task cleanly cancelled.")
+        logger.info("Background scheduler task cleanly cancelled.")
 
 
 # 2. Pass the lifespan to the FastAPI instance
@@ -34,13 +42,13 @@ WANIKANI_API_KEY = os.getenv("WANIKANI_API_KEY")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
 # Quiet hours: no notifications between QUIET_START and QUIET_END (24h, in TIMEZONE)
 QUIET_START = int(os.getenv("QUIET_START", "24"))  # default: 12 AM
-QUIET_END = int(os.getenv("QUIET_END", "5"))        # default: 5 AM
+QUIET_END = int(os.getenv("QUIET_END", "5"))  # default: 5 AM
 
 _tz_name = os.getenv("TIMEZONE", "UTC")
 try:
     TZ = ZoneInfo(_tz_name)
 except ZoneInfoNotFoundError:
-    print(f"Warning: Unknown timezone '{_tz_name}', falling back to UTC.")
+    logger.warning("Unknown timezone '%s', falling back to UTC.", _tz_name)
     TZ = ZoneInfo("UTC")
 
 
@@ -72,7 +80,7 @@ async def fetch_wanikani_data():
 async def send_ntfy_push(message: str, priority: str = "5", tags: str = "books,brain"):
     """Helper to broadcast messages to your configured ntfy topic."""
     if not NTFY_TOPIC:
-        print("Missing NTFY_TOPIC config. Skipping push notification.")
+        logger.warning("Missing NTFY_TOPIC config. Skipping push notification.")
         return
 
     ntfy_headers = {"Title": "WaniKani Alert", "Priority": priority, "Tags": tags}
@@ -104,12 +112,14 @@ async def check_wanikani_reviews():
         if current_reviews_count > 0:
             msg = f"You have {current_reviews_count} WaniKani reviews waiting! Clean your queue."
             await send_ntfy_push(msg, priority="5", tags="books,brain")
-            print(f"Sent scheduled notification for {current_reviews_count} reviews.")
+            logger.info(
+                "Sent scheduled notification for %d reviews.", current_reviews_count
+            )
         else:
-            print("No reviews due at this time.")
+            logger.info("No reviews due at this time.")
 
     except Exception as e:
-        print(f"Error checking reviews: {e}")
+        logger.error("Error checking reviews: %s", e)
 
 
 async def schedule_checker():
@@ -118,12 +128,23 @@ async def schedule_checker():
         # Sleep until the next top-of-hour in the configured timezone
         now = datetime.now(TZ)
         seconds_until_next_hour = (60 - now.minute) * 60 - now.second
-        print(f"Next check in {seconds_until_next_hour // 60}m {seconds_until_next_hour % 60}s (at the top of the next hour in {TZ.key}).")
+        logger.info(
+            "Next check in %dm %ds (at the top of the next hour in %s).",
+            seconds_until_next_hour // 60,
+            seconds_until_next_hour % 60,
+            TZ.key,
+        )
         await asyncio.sleep(seconds_until_next_hour)
 
         if is_quiet_hour():
             current_hour = datetime.now(TZ).hour
-            print(f"Quiet hours active ({QUIET_START}:00\u2013{QUIET_END}:00 {TZ.key}). Skipping {current_hour}:00 check.")
+            logger.info(
+                "Quiet hours active (%d:00\u2013%d:00 %s). Skipping %d:00 check.",
+                QUIET_START,
+                QUIET_END,
+                TZ.key,
+                current_hour,
+            )
             continue
 
         await check_wanikani_reviews()
@@ -174,7 +195,9 @@ async def trigger_check_now(background_tasks: BackgroundTasks) -> dict[str, Any]
 
         # Construct status report payload
         if current_reviews_count > 0:
-            status_report = f"Current status: {current_reviews_count} reviews due right now!"
+            status_report = (
+                f"Current status: {current_reviews_count} reviews due right now!"
+            )
             priority = "5"  # High priority to wake up sound engine
         else:
             status_report = f"Current status: Queue clean! Next review is scheduled at {next_review_str}."

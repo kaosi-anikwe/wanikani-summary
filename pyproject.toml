@@ -10,3 +10,9 @@ dependencies = [
     "tzdata>=2026.3",
     "uvicorn",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+    "ruff>=0.15.21",
+]
