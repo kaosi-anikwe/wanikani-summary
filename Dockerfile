@@ -1,7 +1,6 @@
 # Stage 1: Build stage with uv
 FROM ghcr.io/astral-sh/uv:python3.11-alpine AS builder
 
-# Force uv to compile bytecode on build to make container start instantly
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
@@ -23,8 +22,11 @@ FROM python:3.11-alpine
 
 WORKDIR /app
 
-# Copy the virtual environment from the builder
+# 1. Copy the virtual environment from the builder
 COPY --from=builder /app/.venv /app/.venv
+
+# 2. COPY THE SOURCE FILES (The missing link!)
+COPY main.py .
 
 # Prepend virtualenv path to avoid needing to activate it
 ENV PATH="/app/.venv/bin:$PATH"
