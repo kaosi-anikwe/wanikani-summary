@@ -3,6 +3,7 @@ import asyncio
 import httpx
 from typing import Any
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 
@@ -31,7 +32,27 @@ app = FastAPI(lifespan=lifespan)
 # Configuration from Environment Variables
 WANIKANI_API_KEY = os.getenv("WANIKANI_API_KEY")
 NTFY_TOPIC = os.getenv("NTFY_TOPIC")
-DELAY = int(os.getenv("DELAY") or 1800)  # 1800 seconds = 30 minutes
+# Quiet hours: no notifications between QUIET_START and QUIET_END (24h, in TIMEZONE)
+QUIET_START = int(os.getenv("QUIET_START", "24"))  # default: 12 AM
+QUIET_END = int(os.getenv("QUIET_END", "5"))        # default: 5 AM
+
+_tz_name = os.getenv("TIMEZONE", "UTC")
+try:
+    TZ = ZoneInfo(_tz_name)
+except ZoneInfoNotFoundError:
+    print(f"Warning: Unknown timezone '{_tz_name}', falling back to UTC.")
+    TZ = ZoneInfo("UTC")
+
+
+def is_quiet_hour() -> bool:
+    """Returns True if the current hour (in TZ) falls within the configured quiet window."""
+    hour = datetime.now(TZ).hour
+    if QUIET_START <= QUIET_END:
+        # Simple range, e.g. QUIET_START=2, QUIET_END=6
+        return QUIET_START <= hour < QUIET_END
+    else:
+        # Wraps midnight, e.g. QUIET_START=23, QUIET_END=7 → 11 PM to 7 AM
+        return hour >= QUIET_START or hour < QUIET_END
 
 
 async def fetch_wanikani_data():
@@ -92,12 +113,20 @@ async def check_wanikani_reviews():
 
 
 async def schedule_checker():
-    """Background loop with configurable delay."""
-    # Wait for the server to be fully up before the first check
-    await asyncio.sleep(5)
+    """Fires at the top of every clock hour (in TZ). Skips notification during quiet hours."""
     while True:
+        # Sleep until the next top-of-hour in the configured timezone
+        now = datetime.now(TZ)
+        seconds_until_next_hour = (60 - now.minute) * 60 - now.second
+        print(f"Next check in {seconds_until_next_hour // 60}m {seconds_until_next_hour % 60}s (at the top of the next hour in {TZ.key}).")
+        await asyncio.sleep(seconds_until_next_hour)
+
+        if is_quiet_hour():
+            current_hour = datetime.now(TZ).hour
+            print(f"Quiet hours active ({QUIET_START}:00\u2013{QUIET_END}:00 {TZ.key}). Skipping {current_hour}:00 check.")
+            continue
+
         await check_wanikani_reviews()
-        await asyncio.sleep(DELAY)
 
 
 @app.get("/")
