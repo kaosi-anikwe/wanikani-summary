@@ -33,5 +33,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
+# Explicit health check so Coolify/Docker know when the container is ready.
+# --start-period gives uvicorn time to bind before checks begin.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget -qO- http://localhost:8000/ || exit 1
+
 # Execute uvicorn server directly from the virtual env
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

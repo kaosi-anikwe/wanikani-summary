@@ -87,6 +87,8 @@ async def check_wanikani_reviews():
 
 async def schedule_checker():
     """Background loop with configurable delay."""
+    # Wait for the server to be fully up before the first check
+    await asyncio.sleep(5)
     while True:
         await check_wanikani_reviews()
         await asyncio.sleep(DELAY)
