@@ -1,0 +1,11 @@
+[project]
+name = "wanikani-checker"
+version = "0.1.0"
+description = "FastAPI WaniKani monitor"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "uvicorn",
+]
