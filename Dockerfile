@@ -32,8 +32,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 
-# Health check - gives the server 20s to start before counting failures
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -qO- http://localhost:8000/ || exit 1
-
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
