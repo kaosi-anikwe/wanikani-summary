@@ -189,8 +189,8 @@ async def trigger_check_now(background_tasks: BackgroundTasks) -> dict[str, Any]
             next_time = datetime.fromisoformat(
                 upcoming_reviews[0]["available_at"].replace("Z", "+00:00")
             )
-            # Format nicely for reading
-            local_next = next_time.astimezone()
+            # Format nicely for reading in the configured timezone
+            local_next = next_time.astimezone(TZ)
             next_review_str = local_next.strftime("%I:%M %p")
 
         # Construct status report payload
