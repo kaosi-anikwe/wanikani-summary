@@ -1,6 +1,7 @@
 import os
 import asyncio
 import httpx
+from typing import Any
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
@@ -96,7 +97,7 @@ def health_check():
     return {"status": "running"}
 
 @app.post("/check")
-async def trigger_check_now(background_tasks: BackgroundTasks):
+async def trigger_check_now(background_tasks: BackgroundTasks) -> dict[str, Any]:
     """
     On-demand endpoint to immediately check for reviews.
     Sends a report directly to your phone.
@@ -113,39 +114,6 @@ async def trigger_check_now(background_tasks: BackgroundTasks):
             if avail_time <= now:
                 current_reviews_count += len(period["subject_ids"])
                 
-        # Calculate next upcoming review time
-        next_review_str = "None scheduled"
-        upcoming_reviews = [p for p in reviews_data if datetime.fromisoformat(p["available_at"].replace("Z", "+00:00")) > now]
-        if upcoming_reviews:
-            # Sort chronologically to find the closest one
-            upcoming_reviews.sort(key=lambda x: x["available_at"])
-            next_time = datetime.fromisoformat(upcoming_reviews[0]["available_at"].replace("Z", "+00:00"))
-            # Format nicely for reading
-            local_next = next_time.astimezone()
-            next_review_str = local_next.strftime('%I:%M %p')
-
-        # Construct status report payload
-        if current_reviews_count > 0:
-            status_report = f"📊 Status: {current_reviews_count} reviews due right now!"
-            priority = "5" # High priority to wake up sound engine
-        else:
-            status_report = f"✅ Queue clean! Next review is scheduled at {next_review_str}."
-            priority = "3" # Normal priority notification
-
-        # Queue the push notification response into FastAPI background tasks 
-        # so the API call resolves instantly to the user
-        background_tasks.add_task(send_ntfy_push, status_report, priority, "bar_chart,brain")
-        
-        return {
-            "status": "success", 
-            "current_reviews": current_reviews_count, 
-            "next_review": next_review_str
-        }
-
-    except Exception as e:
-        error_msg = f"Failed manual check: {str(e)}"
-        background_tasks.add_task(send_ntfy_push, error_msg, "3", "warning")
-        return {"status": "error", "message": str(e)}
         # Calculate next upcoming review time
         next_review_str = "None scheduled"
         upcoming_reviews = [p for p in reviews_data if datetime.fromisoformat(p["available_at"].replace("Z", "+00:00")) > now]
