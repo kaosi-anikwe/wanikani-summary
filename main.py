@@ -3,7 +3,7 @@ import logging
 import asyncio
 import httpx
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
@@ -100,6 +100,37 @@ async def fetch_bunpro_hourly_forecast():
         return response.json()
 
 
+def parse_bunpro_forecast(data: dict[str, Any]) -> dict[str, dict[datetime, int]]:
+    """
+    Parses Bunpro forecast JSON and returns dicts mapping datetime objects to counts.
+    Handles the Bunpro API bug where wrapped hours retain the start date instead of incrementing.
+    """
+    parsed: dict[str, dict[datetime, int]] = {"grammar": {}, "vocab": {}}
+
+    for category in ["grammar", "vocab"]:
+        items = data.get(category, {})
+        if not items:
+            continue
+
+        previous_hour = -1
+        day_offset = 0
+
+        for timestamp_str, count in items.items():
+            dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+
+            # Detect hour wrap to adjust day
+            if previous_hour != -1 and dt.hour < previous_hour:
+                day_offset += 1
+            previous_hour = dt.hour
+
+            if day_offset > 0:
+                dt = dt + timedelta(days=day_offset)
+
+            parsed[category][dt] = count
+
+    return parsed
+
+
 async def send_ntfy_push(
     message: str,
     priority: str = "5",
@@ -159,20 +190,15 @@ async def check_bunpro_reviews():
             return
 
         data = await fetch_bunpro_hourly_forecast()
+        parsed_forecast = parse_bunpro_forecast(data)
         now = datetime.now(timezone.utc)
 
-        grammar_count = 0
-        for timestamp_str, count in data.get("grammar", {}).items():
-            dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            if dt <= now:
-                grammar_count += count
-
-        vocab_count = 0
-        for timestamp_str, count in data.get("vocab", {}).items():
-            dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            if dt <= now:
-                vocab_count += count
-
+        grammar_count = sum(
+            count for dt, count in parsed_forecast["grammar"].items() if dt <= now
+        )
+        vocab_count = sum(
+            count for dt, count in parsed_forecast["vocab"].items() if dt <= now
+        )
         current_reviews_count = grammar_count + vocab_count
 
         # If reviews are waiting, ping ntfy
@@ -297,18 +323,14 @@ async def trigger_check_now(background_tasks: BackgroundTasks) -> dict[str, Any]
     if BUNPRO_API_KEY:
         try:
             data = await fetch_bunpro_hourly_forecast()
+            parsed_forecast = parse_bunpro_forecast(data)
 
-            grammar_count = 0
-            for timestamp_str, count in data.get("grammar", {}).items():
-                dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                if dt <= now:
-                    grammar_count += count
-
-            vocab_count = 0
-            for timestamp_str, count in data.get("vocab", {}).items():
-                dt = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-                if dt <= now:
-                    vocab_count += count
+            grammar_count = sum(
+                count for dt, count in parsed_forecast["grammar"].items() if dt <= now
+            )
+            vocab_count = sum(
+                count for dt, count in parsed_forecast["vocab"].items() if dt <= now
+            )
 
             bp_current = grammar_count + vocab_count
             total_current += bp_current
@@ -316,13 +338,9 @@ async def trigger_check_now(background_tasks: BackgroundTasks) -> dict[str, Any]
             # Calculate next upcoming review time
             upcoming_bp_reviews: list[datetime] = []
             for category in ["grammar", "vocab"]:
-                for timestamp_str, count in data.get(category, {}).items():
-                    if count > 0:
-                        dt = datetime.fromisoformat(
-                            timestamp_str.replace("Z", "+00:00")
-                        )
-                        if dt > now:
-                            upcoming_bp_reviews.append(dt)
+                for dt, count in parsed_forecast[category].items():
+                    if count > 0 and dt > now:
+                        upcoming_bp_reviews.append(dt)
 
             bp_next_str = "None scheduled"
             if upcoming_bp_reviews:
